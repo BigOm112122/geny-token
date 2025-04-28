@@ -10,9 +10,9 @@ import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
-/// @title GENY
+/// @title Geny
 /// @author compez.eth
-/// @notice A Token for Empowering Creators, Fueling Boundless Innovation.
+/// @notice ERC20 token with a total supply of 256 million, designed to empower creators and fuel boundless innovation within the Genyleap ecosystem.
 contract GenyToken is Initializable, ERC20Upgradeable, Ownable2StepUpgradeable, PausableUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable {
     // === Constants ===
 
@@ -80,6 +80,9 @@ contract GenyToken is Initializable, ERC20Upgradeable, Ownable2StepUpgradeable, 
 
     /// @dev Emitted when ETH is received
     event EthReceived(address indexed sender, uint256 amount);
+
+    /// @dev Emitted when ETH is withdrawn with a reason
+    event EthWithdrawn(address indexed recipient, uint256 amount, string reason);
 
     // === Constructor ===
 
@@ -211,6 +214,21 @@ contract GenyToken is Initializable, ERC20Upgradeable, Ownable2StepUpgradeable, 
         emit TokensBurned(msg.sender, amount, totalSupply(), reason);
     }
 
+    /// @notice Withdraws ETH from the contract balance
+    /// @dev Callable only by owner, ensures ETH is not locked in the contract; includes reason for transparency
+    /// @param recipient Address to receive the ETH
+    /// @param amount Amount of ETH to withdraw (in wei)
+    /// @param reason Reason for the withdrawal (e.g., "Contract maintenance", "Error recovery")
+    function withdrawEth(address payable recipient, uint256 amount, string calldata reason) external onlyOwner nonReentrant {
+        require(recipient != address(0), "GenyToken: invalid recipient address");
+        require(amount > 0 && amount <= address(this).balance, "GenyToken: invalid amount");
+
+        (bool sent, ) = recipient.call{value: amount}("");
+        require(sent, "GenyToken: ETH transfer failed");
+
+        emit EthWithdrawn(recipient, amount, reason);
+    }
+
     /// @notice Updates the burn and recovery limit (in basis points, e.g., 1000 = 10%)
     /// @dev Callable only by owner, limit must be between 1% and 50% to prevent supply volatility; emits LimitUpdated event
     /// @param newLimitBasisPoints New limit in basis points (100 = 1%, 5000 = 50%)
@@ -297,18 +315,6 @@ contract GenyToken is Initializable, ERC20Upgradeable, Ownable2StepUpgradeable, 
 
     // === Overrides ===
 
-    /// @notice Overrides transferOwnership to ensure safe ownership transfer
-    /// @dev Ensures new owner is a valid multisig address; emits OwnershipTransferred event
-    /// @param newOwner Address of the new owner
-    function transferOwnership(address newOwner) public override onlyOwner {
-        require(newOwner != address(0), "GenyToken: new owner is zero address");
-        // Additional check to ensure new owner is a multisig or trusted address
-        uint256 codeSize;
-        assembly { codeSize := extcodesize(newOwner) }
-        require(codeSize > 0, "GenyToken: new owner must be a contract (e.g., multisig)");
-        _transferOwnership(newOwner);
-    }
-
     /// @notice Overrides transfer to respect paused state
     function transfer(address recipient, uint256 amount) public override whenNotPaused returns (bool) {
         return super.transfer(recipient, amount);
@@ -324,7 +330,9 @@ contract GenyToken is Initializable, ERC20Upgradeable, Ownable2StepUpgradeable, 
         return super.transferFrom(sender, recipient, amount);
     }
 
-    /// @notice Fallback to receive ETH (if needed)
+    // === Fallback ===
+
+    /// @notice Fallback to receive ETH
     receive() external payable {
         emit EthReceived(msg.sender, msg.value);
     }
