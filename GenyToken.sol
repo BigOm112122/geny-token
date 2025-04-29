@@ -14,6 +14,11 @@ import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
 /// @dev Extends OpenZeppelin's ERC20 with permit for gasless approvals and votes for decentralized governance. All allocations are handled by an external contract. Emits standard ERC20 events (Transfer, Approval) and ERC20Votes events (DelegateChanged, DelegateVotesChanged) for key operations; additional events (e.g., for permit) are not defined as standard Approval events suffice for off-chain tracking, given the fixed supply and external allocation. Nonces import is required for ERC20Permit to manage gasless approvals via signatures.
 /// @custom:security-contact security@genyleap.com
 contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
+    /// @dev Custom error for zero address validation
+    error ZeroAddressNotAllowed();
+
+    /// @dev Custom error for empty URI validation
+    error URIMustBeSet();
 
     /// @dev Fixed total token supply (256 million tokens with 18 decimals)
     uint256 internal constant _TOTAL_SUPPLY = 2.56e8 * 1e18;
@@ -47,12 +52,6 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     /// @param to Address receiving the tokens
     /// @param amount Number of tokens transferred
     event TransferWithVotes(address indexed from, address indexed to, uint256 amount);
-
-    /// @dev Custom error for zero address validation
-    error ZeroAddressNotAllowed();
-
-    /// @dev Custom error for empty URI validation
-    error URIMustBeSet();
 
     /// @notice Deploys the token and allocates the total supply to the specified contract
     /// @dev Initializes token metadata and mints the fixed supply to the allocation contract. Not payable to prevent ETH deposits and potential locking, prioritizing security over minor gas savings. Uses custom errors for gas-efficient error handling.
@@ -114,16 +113,16 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     /// @param _bytes The bytes32 value to convert
     /// @return The converted string
     function _bytes32ToString(bytes32 _bytes) internal pure returns (string memory) {
-        uint256 i = 0;
+        uint256 i;
         // Iterate until end of bytes32 or null byte is found
         while (i < 32 && _bytes[i] != 0) {
-            // Use unchecked block to skip overflow checks for gas optimization
-            unchecked { ++i; }
+            // Increment is safe as i is bounded by 32, removed unchecked for better readability
+            ++i;
         }
         // Create a byte array of the appropriate length
         bytes memory bytesArray = new bytes(i);
         // Copy bytes to the array
-        for (uint256 j = 0; j < i; ++j) {
+        for (uint256 j; j < i; ++j) {
             bytesArray[j] = _bytes[j];
         }
         // Convert byte array to string
