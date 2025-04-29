@@ -37,10 +37,12 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
         require(allocationContract != address(0), "Zero address not allowed");
         require(bytes(contractURI_).length != 0, "URI must be set");
 
-        _contractURI = contractURI_;
-        _mint(allocationContract, _TOTAL_SUPPLY);
+        uint256 totalSupply = _TOTAL_SUPPLY; // Cache the total supply in memory
 
-        emit Initialized(allocationContract, _TOTAL_SUPPLY);
+        _contractURI = contractURI_;
+        _mint(allocationContract, totalSupply); // Use cached totalSupply
+
+        emit Initialized(allocationContract, totalSupply); // Use cached totalSupply
     }
 
     /// @notice Contract metadata URI
