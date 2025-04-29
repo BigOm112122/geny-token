@@ -36,7 +36,7 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
         string memory contractURI_
     ) ERC20("Genyleap", "GENY") ERC20Permit("Genyleap") {
         require(allocationContract != address(0), "Allocation contract cannot be address zero");
-        require(bytes(contractURI_).length > 0, "URI needs to be set");
+        require(bytes(contractURI_).length != 0, "URI needs to be set");
 
         _contractURI = contractURI_;
         _mint(allocationContract, TOTAL_SUPPLY);
