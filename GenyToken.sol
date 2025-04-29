@@ -32,7 +32,7 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     constructor(
         address allocationContract,
         string memory contractURI_
-    ) payable ERC20(_TOKEN_NAME, _TOKEN_SYMBOL) ERC20Permit(_TOKEN_NAME) {
+    ) payable ERC20(tokenName, tokenSymbol) ERC20Permit(tokenName) {
         require(msg.value == 0, "ETH not accepted");
         require(allocationContract != address(0), "Zero address not allowed");
         require(bytes(contractURI_).length != 0, "URI must be set");
@@ -46,7 +46,7 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
 
         emit Initialized(allocationContract, totalSupply); // Use cached totalSupply
     }
-
+    
     /// @notice Contract metadata URI
     function contractURI() external view returns (string memory) {
         return _contractURI;
