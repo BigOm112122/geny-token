@@ -48,15 +48,13 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     event TransferWithVotes(address indexed from, address indexed to, uint256 amount);
 
     /// @notice Deploys the token and allocates the total supply to the specified contract
-    /// @dev Initializes token metadata and mints the fixed supply to the allocation contract
+    /// @dev Initializes token metadata and mints the fixed supply to the allocation contract.
     /// @param allocationContract Address to receive the initial token supply
     /// @param contractURI_ Metadata URI for the token (ERC-7572)
     constructor(
         address allocationContract,
         string memory contractURI_
-    ) payable ERC20(_tokenNameStr, _tokenSymbolStr) ERC20Permit(_tokenNameStr) {
-        // Prevent ETH deposits during deployment
-        require(msg.value == 0, "ETH not accepted");
+    ) ERC20(_tokenNameStr, _tokenSymbolStr) ERC20Permit(_tokenNameStr) {
         // Ensure allocation contract is not the zero address
         require(allocationContract != address(0), "Zero address not allowed");
         // Ensure metadata URI is not empty
