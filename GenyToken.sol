@@ -67,12 +67,12 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
 
     /// @dev Converts bytes32 to string for compatibility with ERC20 interfaces
     function _bytes32ToString(bytes32 _bytes) internal pure returns (string memory) {
-        uint8 i = 0;
+        uint256 i = 0;
         while (i < 32 && _bytes[i] != 0) {
             i++;
         }
         bytes memory bytesArray = new bytes(i);
-        for (uint8 j = 0; j < i; j++) {
+        for (uint256 j = 0; j < i; j++) {
             bytesArray[j] = _bytes[j];
         }
         return string(bytesArray);
