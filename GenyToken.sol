@@ -16,9 +16,9 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     /// @dev Total token supply (256 million tokens with 18 decimals)
     uint256 internal constant _TOTAL_SUPPLY = 256_000_000 * 10 ** 18;
 
-    /// @dev Token name and symbol
-    string internal constant _TOKEN_NAME = "Genyleap";
-    string internal constant _TOKEN_SYMBOL = "GENY";
+    /// @dev Token name and symbol as bytes32 for gas optimization
+    bytes32 internal constant _TOKEN_NAME = bytes32("Genyleap");
+    bytes32 internal constant _TOKEN_SYMBOL = bytes32("GENY");
 
     /// @notice Metadata URI (ERC-7572)
     string private immutable _contractURI;
@@ -32,21 +32,19 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     constructor(
         address allocationContract,
         string memory contractURI_
-    ) payable ERC20(tokenName, tokenSymbol) ERC20Permit(tokenName) {
+    ) payable ERC20(_bytes32ToString(_TOKEN_NAME), _bytes32ToString(_TOKEN_SYMBOL)) ERC20Permit(_bytes32ToString(_TOKEN_NAME)) {
         require(msg.value == 0, "ETH not accepted");
         require(allocationContract != address(0), "Zero address not allowed");
         require(bytes(contractURI_).length != 0, "URI must be set");
 
         uint256 totalSupply = _TOTAL_SUPPLY; // Cache the total supply in memory
-        string memory tokenName = _TOKEN_NAME; // Cache the token name in memory
-        string memory tokenSymbol = _TOKEN_SYMBOL; // Cache the token symbol in memory
 
         _contractURI = contractURI_;
         _mint(allocationContract, totalSupply); // Use cached totalSupply
 
         emit Initialized(allocationContract, totalSupply); // Use cached totalSupply
     }
-    
+
     /// @notice Contract metadata URI
     function contractURI() external view returns (string memory) {
         return _contractURI;
@@ -59,12 +57,25 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
 
     /// @notice Returns token name
     function tokenName() external pure returns (string memory) {
-        return _TOKEN_NAME;
+        return _bytes32ToString(_TOKEN_NAME);
     }
 
     /// @notice Returns token symbol
     function tokenSymbol() external pure returns (string memory) {
-        return _TOKEN_SYMBOL;
+        return _bytes32ToString(_TOKEN_SYMBOL);
+    }
+
+    /// @dev Converts bytes32 to string for compatibility with ERC20 interfaces
+    function _bytes32ToString(bytes32 _bytes) internal pure returns (string memory) {
+        uint8 i = 0;
+        while (i < 32 && _bytes[i] != 0) {
+            i++;
+        }
+        bytes memory bytesArray = new bytes(i);
+        for (uint8 j = 0; j < i; j++) {
+            bytesArray[j] = _bytes[j];
+        }
+        return string(bytesArray);
     }
 
     /// @dev Hook for vote tracking
