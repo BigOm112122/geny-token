@@ -139,9 +139,4 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     {
         return super.nonces(owner);
     }
-
-    /// @dev Dummy function to make sure the unused import warning is avoided
-    function _useNonces(address owner) internal view {
-        Nonces.nonces(owner); // this line is only for analysis tools and will be optimized out
-    }
 }
