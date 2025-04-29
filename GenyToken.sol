@@ -59,31 +59,26 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     constructor(
         address allocationContract,
         string memory contractURI_
-    ) ERC20(_tokenNameStr, _tokenSymbolStr) ERC20Permit(_tokenNameStr) {
-        // Ensure allocation contract is not the zero address
+    ) ERC20("Genyleap", "GENY") ERC20Permit("Genyleap") {
         if (allocationContract == address(0)) {
             revert ZeroAddressNotAllowed();
         }
-        // Ensure metadata URI is not empty
         if (bytes(contractURI_).length == 0) {
             revert URIMustBeSet();
         }
 
-        // Cache total supply in memory to reduce gas costs
-        uint256 totalSupply = _TOTAL_SUPPLY;
-        // Cache token name and symbol as strings for ERC20 compatibility
-        _tokenNameStr = _bytes32ToString(bytes32("Genyleap"));
-        _tokenSymbolStr = _bytes32ToString(bytes32("GENY"));
-        // Emit event for token name and symbol initialization
+        // Set token name and symbol (for external view functions)
+        _tokenNameStr = "Genyleap";
+        _tokenSymbolStr = "GENY";
         emit TokenMetadataSet(_tokenNameStr, _tokenSymbolStr);
 
         // Set metadata URI and emit event
         _contractURI = contractURI_;
         emit MetadataURIUpdated(contractURI_);
-        // Mint the fixed supply to the allocation contract
-        _mint(allocationContract, totalSupply);
 
-        // Emit initialization event
+        // Mint the fixed supply to the allocation contract
+        uint256 totalSupply = _TOTAL_SUPPLY;
+        _mint(allocationContract, totalSupply);
         emit Initialized(allocationContract, totalSupply);
     }
 
