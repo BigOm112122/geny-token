@@ -74,7 +74,7 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
             i++;
         }
         bytes memory bytesArray = new bytes(i);
-        for (uint256 j = 0; j < i; j++) {
+        for (uint256 j = 0; j < i; ++j) {
             bytesArray[j] = _bytes[j];
         }
         return string(bytesArray);
