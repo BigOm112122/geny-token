@@ -23,12 +23,6 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     /// @dev Fixed total token supply (256 million tokens with 18 decimals)
     uint256 internal constant _TOTAL_SUPPLY = 2.56e8 * 1e18;
 
-    /// @dev Token name stored as bytes32 for gas-efficient storage
-    bytes32 internal constant _TOKEN_NAME = bytes32("Genyleap");
-
-    /// @dev Token symbol stored as bytes32 for gas-efficient storage
-    bytes32 internal constant _TOKEN_SYMBOL = bytes32("GENY");
-
     /// @dev Cached token name as string for ERC20 compatibility and gas optimization
     string private _tokenNameStr;
 
@@ -44,9 +38,9 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     event Initialized(address indexed allocationContract, uint256 amount);
 
     /// @notice Emitted when token name and symbol are set during deployment
-    /// @param name The token name set
-    /// @param symbol The token symbol set
-    event TokenMetadataSet(string name, string symbol);
+    /// @param name The token name set, indexed for efficient off-chain filtering
+    /// @param symbol The token symbol set, indexed for efficient off-chain filtering
+    event TokenMetadataSet(string indexed name, string indexed symbol);
 
     /// @notice Emitted when contract metadata URI is updated
     /// @param newURI The new metadata URI set, indexed for efficient off-chain filtering
@@ -59,7 +53,7 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     event TransferWithVotes(address indexed from, address indexed to, uint256 amount);
 
     /// @notice Deploys the token and allocates the total supply to the specified contract
-    /// @dev Initializes token metadata and mints the fixed supply to the allocation contract. Not payable to prevent ETH deposits and potential locking, prioritizing security over minor gas savings. Uses custom errors for gas-efficient error handling. Emits events for state changes (TokenMetadataSet, MetadataURIUpdated, Initialized).
+    /// @dev Initializes token metadata and mints the fixed supply to the allocation contract. Not payable to prevent ETH deposits and potential locking, prioritizing security over minor gas savings. Uses custom errors for gas-efficient error handling. Emits events for state changes (TokenMetadataSet, MetadataURIUpdated, Initialized). Token name and symbol are directly set without intermediate constants for simplicity.
     /// @param allocationContract Address to receive the initial token supply
     /// @param contractURI_ Metadata URI for the token (ERC-7572)
     constructor(
@@ -78,8 +72,8 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
         // Cache total supply in memory to reduce gas costs
         uint256 totalSupply = _TOTAL_SUPPLY;
         // Cache token name and symbol as strings for ERC20 compatibility
-        _tokenNameStr = _bytes32ToString(_TOKEN_NAME);
-        _tokenSymbolStr = _bytes32ToString(_TOKEN_SYMBOL);
+        _tokenNameStr = _bytes32ToString(bytes32("Genyleap"));
+        _tokenSymbolStr = _bytes32ToString(bytes32("GENY"));
         // Emit event for token name and symbol initialization
         emit TokenMetadataSet(_tokenNameStr, _tokenSymbolStr);
 
