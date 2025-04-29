@@ -7,16 +7,17 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 
-/// @title GenyToken
+/// @title Geny
 /// @author compez.eth
-/// @notice A minimal ERC20 token for the Genyleap ecosystem with a fixed supply of 256M, supporting voting and permit functionality.
+/// @notice ERC20 token with a total supply of 256 million, designed to empower creators and fuel boundless innovation within the Genyleap ecosystem.
 /// @dev Implements core ERC20 functionality with permit for gasless approvals and votes for decentralized governance. All allocations and sensitive operations are handled by auxiliary contracts.
 /// @custom:security-contact security@genyleap.com
+
 contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     /// @dev Total token supply (256 million tokens with 18 decimals)
     uint256 internal constant _TOTAL_SUPPLY = 256_000_000 * 10 ** 18;
 
-    /// @dev Token name and symbol as bytes32 for gas optimization
+    /// @dev Token name and symbol
     bytes32 internal constant _TOKEN_NAME = bytes32("Genyleap");
     bytes32 internal constant _TOKEN_SYMBOL = bytes32("GENY");
 
@@ -32,14 +33,12 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     constructor(
         address allocationContract,
         string memory contractURI_
-    ) payable ERC20(tokenNameStr, tokenSymbolStr) ERC20Permit(tokenNameStr) {
+    ) payable ERC20(_bytes32ToString(_TOKEN_NAME), _bytes32ToString(_TOKEN_SYMBOL)) ERC20Permit(_bytes32ToString(_TOKEN_NAME)) {
         require(msg.value == 0, "ETH not accepted");
         require(allocationContract != address(0), "Zero address not allowed");
         require(bytes(contractURI_).length != 0, "URI must be set");
 
-        uint256 totalSupply = _TOTAL_SUPPLY;
-        string memory tokenNameStr = _bytes32ToString(_TOKEN_NAME);
-        string memory tokenSymbolStr = _bytes32ToString(_TOKEN_SYMBOL);
+        uint256 totalSupply = _TOTAL_SUPPLY; // Cache the total supply in memory
 
         _contractURI = contractURI_;
         _mint(allocationContract, totalSupply);
@@ -68,7 +67,9 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     }
 
     /// @dev Converts bytes32 to string for compatibility with ERC20 interfaces
-    function _bytes32ToString(bytes32 _bytes) internal pure returns (string memory) {
+    function _bytes32ToString(
+        bytes32 _bytes
+    ) internal pure returns (string memory) {
         uint256 i = 0;
         while (i < 32 && _bytes[i] != 0) {
             i++;
@@ -81,20 +82,18 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     }
 
     /// @dev Hook for vote tracking
-    function _update(address from, address to, uint256 amount)
-        internal
-        override(ERC20, ERC20Votes)
-    {
+    function _update(
+        address from,
+        address to,
+        uint256 amount
+    ) internal override(ERC20, ERC20Votes) {
         super._update(from, to, amount);
     }
 
     /// @dev Override for permit nonce handling
-    function nonces(address owner)
-        public
-        view
-        override(ERC20Permit)
-        returns (uint256)
-    {
+    function nonces(
+        address owner
+    ) public view override(ERC20Permit) returns (uint256) {
         return super.nonces(owner);
     }
 
