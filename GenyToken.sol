@@ -13,8 +13,8 @@ import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Vo
 /// @dev Implements core ERC20 functionality with permit for gasless approvals and votes for decentralized governance. All allocations and sensitive operations are handled by auxiliary contracts.
 /// @custom:security-contact security@genyleap.com
 contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
-    /// @notice Total token supply (256 million tokens with 18 decimals)
-    uint256 public constant TOTAL_SUPPLY = 256_000_000 * 10 ** 18;
+    /// @dev Total token supply (256 million tokens with 18 decimals) — defined as internal constant to avoid auto-generated getter
+    uint256 internal constant _TOTAL_SUPPLY = 256_000_000 * 10 ** 18;
 
     /// @notice Token name
     string public constant TOKEN_NAME = "Genyleap";
@@ -39,15 +39,19 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
         require(bytes(contractURI_).length != 0, "URI needs to be set");
 
         _contractURI = contractURI_;
-        _mint(allocationContract, TOTAL_SUPPLY);
+        _mint(allocationContract, _TOTAL_SUPPLY);
 
-        emit Initialized(allocationContract, TOTAL_SUPPLY);
+        emit Initialized(allocationContract, _TOTAL_SUPPLY);
     }
 
     /// @notice Returns the contract URI for token metadata
-    /// @return Contract URI set for the token
     function contractURI() external view returns (string memory) {
         return _contractURI;
+    }
+
+    /// @notice Returns the total supply value as defined in the contract
+    function totalSupplyConstant() external pure returns (uint256) {
+        return _TOTAL_SUPPLY;
     }
 
     /// @dev Overrides for ERC20 and ERC20Votes inheritance
