@@ -37,6 +37,10 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
     /// @param amount Total number of tokens minted
     event Initialized(address indexed allocationContract, uint256 amount);
 
+    /// @notice Emitted when contract metadata URI is updated
+    /// @param newURI The new metadata URI set
+    event MetadataURIUpdated(string newURI);
+
     /// @notice Deploys the token and allocates the total supply to the specified contract
     /// @dev Initializes token metadata and mints the fixed supply to the allocation contract
     /// @param allocationContract Address to receive the initial token supply
@@ -134,5 +138,10 @@ contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
         returns (uint256)
     {
         return super.nonces(owner);
+    }
+
+    /// @dev Dummy function to make sure the unused import warning is avoided
+    function _useNonces(address owner) internal view {
+        Nonces.nonces(owner); // this line is only for analysis tools and will be optimized out
     }
 }
