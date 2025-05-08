@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 Genyleap
 
-pragma solidity 0.8.29;
+pragma solidity 0.8.30;
 
 /// @title GenyUUPSProxy
 /// @author compez.eth
