@@ -18,7 +18,6 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 /// @dev Uses OpenZeppelin upgradeable contracts with Ownable2Step for enhanced security. Supports multiple beneficiaries and vesting schedules.
 ///      The owner must be a multisig contract (e.g., Gnosis Safe) for secure governance.
 ///      Uses block.timestamp for vesting calculations, which is safe for long-term vesting (e.g., months) as miner manipulation is negligible.
-///      IGenyAllocation interface is not implemented as it is not required for current functionality (defined in GenyAirdrop.sol).
 /// @custom:security-contact security@genyleap.com
 contract GenyAllocation is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable, ReentrancyGuardUpgradeable, PausableUpgradeable {
     using SafeERC20 for IERC20;
@@ -76,6 +75,9 @@ contract GenyAllocation is Initializable, Ownable2StepUpgradeable, UUPSUpgradeab
     /// @notice Emitted when the token address is set
     event TokenSet(address indexed token);
 
+    /// @notice Emitted when allowance is set for a spender
+    event AllowanceSet(address indexed spender, uint256 amount);
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -105,6 +107,16 @@ contract GenyAllocation is Initializable, Ownable2StepUpgradeable, UUPSUpgradeab
         token = IERC20(token_);
         tokenSet = true;
         emit TokenSet(token_);
+    }
+
+    /// @notice Approves a spender to transfer tokens from this contract
+    /// @dev Only callable by the owner (multisig)
+    /// @param spender Address of the spender
+    /// @param amount Amount of tokens to approve
+    function approveSpender(address spender, uint256 amount) external onlyOwner tokenRequired {
+        require(spender != address(0), "Invalid spender");
+        token.approve(spender, amount);
+        emit AllowanceSet(spender, amount);
     }
 
     /// @dev Modifier to ensure token is set before operations

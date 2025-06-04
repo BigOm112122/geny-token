@@ -10,11 +10,13 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @title GenyStaking
 /// @author compez.eth
-/// @notice Allows users to stake GENY tokens and earn rewards (6-10% annually).
-/// @dev Integrates with GenyTreasury for reward funding. Uses nonReentrant, Pausable, and UUPS upgradeability.
+/// @notice Allows users to stake GENY tokens and earn rewards (6-10% annually) in the Genyleap ecosystem.
+/// @dev Uses OpenZeppelin upgradeable contracts with SafeERC20 for secure token interactions. Rewards are funded from GenyAllocation or GenyTreasury.
+///      The owner must be a multisig contract (e.g., Gnosis Safe) for secure governance.
 /// @custom:security-contact security@genyleap.com
 contract GenyStaking is
     Initializable,
@@ -24,9 +26,10 @@ contract GenyStaking is
     UUPSUpgradeable
 {
     using SafeERC20Upgradeable for IERC20Upgradeable;
+    using Math for uint256;
 
     IERC20Upgradeable public token; // GENY token contract
-    address public treasury; // GenyTreasury for reward funding
+    address public allocation; // GenyAllocation for funding rewards
     uint32 public rewardRate; // Reward rate (e.g., 800 for 8%)
     uint32 public constant REWARD_DENOMINATOR = 10_000; // For percentage calculations
     uint48 public constant SECONDS_PER_YEAR = 365 * 24 * 60 * 60; // Seconds in a year
@@ -48,22 +51,34 @@ contract GenyStaking is
     /// @notice Emitted when rewards are claimed
     event RewardsClaimed(address indexed user, uint96 amount);
     /// @notice Emitted when reward rate is updated
-    event RewardRateUpdated(uint32 newRate);
+    event RewardRateUpdated(uint32 oldRate, uint32 newRate);
+    /// @notice Emitted when tokens are withdrawn by owner
+    event TokensWithdrawn(address indexed owner, uint96 amount);
+    /// @notice Emitted for debugging timeElapsed
+    event DebugTimeElapsed(uint48 timeElapsed);
+    /// @notice Emitted for debugging reward
+    event DebugReward(uint96 reward);
+    /// @notice Emitted for debugging lastClaimed
+    event DebugLastClaimed(uint48 lastClaimed);
 
-    constructor() { _disableInitializers(); }
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
     /// @notice Initializes the staking contract
     /// @param _token Address of the GENY token contract
-    /// @param _treasury Address of the GenyTreasury contract
-    /// @param _owner Address of the contract owner
+    /// @param _allocation Address of the GenyAllocation contract
+    /// @param _owner Address of the contract owner (multisig)
     /// @param _rewardRate Reward rate (e.g., 800 for 8%)
     function initialize(
         address _token,
-        address _treasury,
+        address _allocation,
         address _owner,
         uint32 _rewardRate
     ) external initializer {
-        require(_token != address(0) && _treasury != address(0) && _owner != address(0), "Invalid address");
+        require(_token != address(0) && _allocation != address(0) && _owner != address(0), "Invalid address");
+        require(_allocation.code.length > 0, "Allocation not a contract");
         require(_rewardRate >= 600 && _rewardRate <= 1000, "Reward rate must be 6-10%");
 
         __Ownable2Step_init();
@@ -73,7 +88,7 @@ contract GenyStaking is
         __UUPSUpgradeable_init();
 
         token = IERC20Upgradeable(_token);
-        treasury = _treasury;
+        allocation = _allocation;
         rewardRate = _rewardRate;
     }
 
@@ -82,6 +97,11 @@ contract GenyStaking is
     function stake(uint96 _amount) external nonReentrant whenNotPaused {
         require(_amount > 0, "Amount must be greater than zero");
         require(token.balanceOf(msg.sender) >= _amount, "Insufficient balance");
+
+        // Initialize lastClaimed for new stakers
+        if (stakes[msg.sender].amount == 0 && lastClaimed[msg.sender] == 0) {
+            lastClaimed[msg.sender] = uint48(block.timestamp);
+        }
 
         _updateRewards(msg.sender);
 
@@ -111,22 +131,35 @@ contract GenyStaking is
     }
 
     /// @notice Claims accumulated rewards
-    function claimRewards() external nonReentrant whenNotPaused {
+    /// @return reward Amount of rewards claimed
+    function claimRewards() external nonReentrant whenNotPaused returns (uint96 reward) {
         _updateRewards(msg.sender);
-        uint96 reward = stakes[msg.sender].rewardDebt;
+        reward = stakes[msg.sender].rewardDebt;
         require(reward > 0, "No rewards to claim");
+        require(token.balanceOf(address(this)) >= reward, "Insufficient contract balance");
 
         stakes[msg.sender].rewardDebt = 0;
-        token.safeTransferFrom(treasury, msg.sender, reward);
+        token.safeTransfer(msg.sender, reward);
         emit RewardsClaimed(msg.sender, reward);
+    }
+
+    /// @notice Withdraws tokens from the contract (only owner)
+    /// @param _amount Amount to withdraw
+    function withdrawTokens(uint96 _amount) external onlyOwner nonReentrant {
+        require(_amount > 0, "Amount must be greater than zero");
+        require(token.balanceOf(address(this)) >= _amount, "Insufficient contract balance");
+
+        token.safeTransfer(msg.sender, _amount);
+        emit TokensWithdrawn(msg.sender, _amount);
     }
 
     /// @notice Updates reward rate
     /// @param _newRate New reward rate (e.g., 800 for 8%)
     function updateRewardRate(uint32 _newRate) external onlyOwner {
         require(_newRate >= 600 && _newRate <= 1000, "Reward rate must be 6-10%");
+        uint32 oldRate = rewardRate;
         rewardRate = _newRate;
-        emit RewardRateUpdated(_newRate);
+        emit RewardRateUpdated(oldRate, _newRate);
     }
 
     /// @dev Updates user rewards
@@ -136,7 +169,10 @@ contract GenyStaking is
         if (userStake.amount == 0) return;
 
         uint48 timeElapsed = uint48(block.timestamp) - lastClaimed[_user];
-        uint96 reward = uint96((userStake.amount * rewardRate * timeElapsed) / (REWARD_DENOMINATOR * SECONDS_PER_YEAR));
+        emit DebugTimeElapsed(timeElapsed);
+        emit DebugLastClaimed(lastClaimed[_user]);
+        uint96 reward = uint96(Math.mulDiv(userStake.amount, rewardRate * timeElapsed, REWARD_DENOMINATOR * SECONDS_PER_YEAR));
+        emit DebugReward(reward);
         userStake.rewardDebt += reward;
         lastClaimed[_user] = uint48(block.timestamp);
     }
@@ -149,8 +185,14 @@ contract GenyStaking is
         if (userStake.amount == 0) return 0;
 
         uint48 timeElapsed = uint48(block.timestamp) - lastClaimed[_user];
-        reward = uint96((userStake.amount * rewardRate * timeElapsed) / (REWARD_DENOMINATOR * SECONDS_PER_YEAR));
+        reward = uint96(Math.mulDiv(userStake.amount, rewardRate * timeElapsed, REWARD_DENOMINATOR * SECONDS_PER_YEAR));
         reward += userStake.rewardDebt;
+    }
+
+    /// @notice Gets total rewards distributed
+    /// @return totalRewards Total rewards distributed
+    function getTotalRewards() external view returns (uint96 totalRewards) {
+        return totalStaked > 0 ? uint96(Math.mulDiv(totalStaked, rewardRate * uint48(block.timestamp - stakes[address(this)].startTime), REWARD_DENOMINATOR * SECONDS_PER_YEAR)) : 0;
     }
 
     /// @notice Pauses the contract

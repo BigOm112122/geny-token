@@ -9,11 +9,13 @@ import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @title GenyVesting
 /// @author compez.eth
 /// @notice Manages linear vesting with cliff for Genyleap token allocations (e.g., team, investors).
 /// @dev Integrates with GenyAllocation for token supply. Uses nonReentrant and UUPS upgradeability.
+///      Uses block.timestamp for vesting calculations, safe for long-term vesting (e.g., months) as miner manipulation is negligible.
 /// @custom:security-contact security@genyleap.com
 contract GenyVesting is
     Initializable,
@@ -22,6 +24,7 @@ contract GenyVesting is
     UUPSUpgradeable
 {
     using SafeERC20Upgradeable for IERC20Upgradeable;
+    using Math for uint256;
 
     IERC20Upgradeable public token; // GENY token contract
     address public beneficiary; // Address to receive vested tokens
@@ -44,49 +47,52 @@ contract GenyVesting is
     /// @param duration Total vesting duration in seconds
     event VestingInitialized(address indexed beneficiary, uint96 amount, uint48 startTime, uint48 cliff, uint48 duration);
 
-    constructor() { _disableInitializers(); }
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
     /// @notice Initializes the vesting contract
-    /// @param _token Address of the GENY token contract
-    /// @param _owner Address of the contract owner
-    /// @param _beneficiary Address to receive vested tokens
-    /// @param _amount Total tokens to vest
-    /// @param _cliffSeconds Cliff period in seconds
-    /// @param _durationSeconds Total vesting duration in seconds
-    /// @param _intervalSeconds Release interval in seconds
+    /// @param tokenAddress Address of the GENY token contract
+    /// @param newOwner Address of the contract owner
+    /// @param beneficiaryAddress Address to receive vested tokens
+    /// @param amount Total tokens to vest
+    /// @param cliffDuration Cliff period in seconds
+    /// @param vestingDuration Total vesting duration in seconds
+    /// @param releaseInterval Release interval in seconds
     function initialize(
-        address _token,
-        address _owner,
-        address _beneficiary,
-        uint96 _amount,
-        uint48 _cliffSeconds,
-        uint48 _durationSeconds,
-        uint48 _intervalSeconds
+        address tokenAddress,
+        address newOwner,
+        address beneficiaryAddress,
+        uint96 amount,
+        uint48 cliffDuration,
+        uint48 vestingDuration,
+        uint48 releaseInterval
     ) external initializer {
-        require(_token != address(0) && _owner != address(0) && _beneficiary != address(0), "Invalid address");
-        require(_amount > 0, "Amount must be greater than zero");
-        require(_durationSeconds >= _cliffSeconds, "Duration must be >= cliff");
-        require(_intervalSeconds > 0, "Interval must be greater than zero");
+        require(tokenAddress != address(0) && newOwner != address(0) && beneficiaryAddress != address(0), "Invalid address");
+        require(amount > 0, "Amount must be greater than zero");
+        require(vestingDuration >= cliffDuration, "Duration must be >= cliff");
+        require(releaseInterval > 0, "Interval must be greater than zero");
 
         __Ownable2Step_init();
-        _transferOwnership(_owner);
+        _transferOwnership(newOwner);
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
 
-        token = IERC20Upgradeable(_token);
-        beneficiary = _beneficiary;
-        startTime = uint48(block.timestamp);
-        cliffSeconds = _cliffSeconds;
-        durationSeconds = _durationSeconds;
-        intervalSeconds = _intervalSeconds;
-        totalAmount = _amount;
+        token = IERC20Upgradeable(tokenAddress);
+        beneficiary = beneficiaryAddress;
+        startTime = uint48(block.timestamp); // Safe for long-term vesting
+        cliffSeconds = cliffDuration;
+        durationSeconds = vestingDuration;
+        intervalSeconds = releaseInterval;
+        totalAmount = amount;
 
-        emit VestingInitialized(_beneficiary, _amount, startTime, _cliffSeconds, _durationSeconds);
+        emit VestingInitialized(beneficiaryAddress, amount, startTime, cliffDuration, vestingDuration);
     }
 
     /// @notice Releases vested tokens to the beneficiary
     function release() external nonReentrant {
-        require(block.timestamp >= startTime + cliffSeconds, "Cliff period not reached");
+        require(block.timestamp >= startTime + cliffSeconds, "Cliff period not reached"); // Safe for long-term vesting
         uint96 releasable = getReleasableAmount();
         require(releasable > 0, "No tokens to release");
 
@@ -100,12 +106,17 @@ contract GenyVesting is
     function getReleasableAmount() public view returns (uint96 amount) {
         if (block.timestamp < startTime + cliffSeconds) return 0;
 
-        uint48 elapsedTime = uint48(block.timestamp) - startTime;
+        uint48 elapsedTime = uint48(block.timestamp) - startTime; // Safe for long-term vesting
         if (elapsedTime >= durationSeconds) {
             amount = totalAmount - releasedAmount;
         } else {
-            uint48 intervalsPassed = elapsedTime / intervalSeconds;
-            amount = uint96((totalAmount * intervalsPassed * intervalSeconds) / durationSeconds) - releasedAmount;
+            // Use Math.mulDiv for precise calculations to avoid precision loss
+            amount = uint96(Math.mulDiv(
+                totalAmount,
+                elapsedTime,
+                durationSeconds,
+                Math.Rounding.Floor
+            )) - releasedAmount;
         }
     }
 

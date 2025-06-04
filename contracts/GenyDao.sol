@@ -16,9 +16,8 @@ import "@openzeppelin/contracts/governance/TimelockController.sol";
 /// @author compez.eth
 /// @notice Manages Genyleap Improvement Proposals (GIP) for decentralized governance in the Genyleap ecosystem.
 /// @dev Implements voting with 20% quorum for normal proposals and 50% for sensitive ones, 7-day voting period, and 2-day Timelock.
-///      Proposing requires 0.1% (normal) or 1% (sensitive) of circulating supply; voting requires 256 tokens.
-///      Circulating supply is calculated using GenyAllocation's released tokens. Investor labels enhance transparency.
-///      Minimums and labels can be updated via GIP. Integrates with GenyAllocation and GenyBurnManager.
+///      The owner must be a multisig contract (e.g., Gnosis Safe) for secure governance.
+///      Uses UUPS proxy pattern for upgradability.
 /// @custom:security-contact security@genyleap.com
 contract GenyDAO is
     Initializable,
@@ -88,11 +87,15 @@ contract GenyDAO is
     /// @notice Emitted when an investor label is updated
     event InvestorLabelUpdated(address indexed investor, InvestorLabel oldLabel, InvestorLabel newLabel);
 
-    constructor() { _disableInitializers(); }
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
     /// @notice Initializes the DAO contract
+    /// @dev The owner must be a multisig contract (e.g., Gnosis Safe) for secure governance.
     /// @param _token Address of the GENY token contract
-    /// @param _owner Address of the initial owner (e.g., multisig)
+    /// @param _owner Address of the initial owner (multisig)
     /// @param _burnManager Address of the GenyBurnManager contract
     /// @param _allocationManager Address of the GenyAllocation contract
     /// @param _timelock Address of the TimelockController contract
@@ -134,27 +137,30 @@ contract GenyDAO is
     }
 
     /// @notice Creates a new GIP
+    /// @dev Callable by any user with sufficient token balance
     /// @param description Proposal description
     /// @param isSensitive True if the proposal is sensitive
     /// @param targets Contract addresses to call
     /// @param values ETH values for each call
     /// @param calldatas Data for each call
+    /// @param startTime The start time for voting (must be >= block.timestamp)
     function createProposal(
         string memory description,
         bool isSensitive,
         address[] memory targets,
         uint256[] memory values,
-        bytes[] memory calldatas
+        bytes[] memory calldatas,
+        uint48 startTime
     ) external whenNotPaused {
         require(token.balanceOf(msg.sender) >= getMinProposingPower(isSensitive), "Insufficient proposing power");
         require(targets.length == values.length && values.length == calldatas.length, "Invalid proposal data");
+        require(startTime >= block.timestamp, "Start time must be in the future or present");
 
-        uint48 currentTime = uint48(block.timestamp);
         proposals[++proposalCount] = Proposal({
             proposer: msg.sender,
             description: description,
-            startTime: currentTime,
-            endTime: currentTime + VOTING_PERIOD,
+            startTime: startTime,
+            endTime: startTime + VOTING_PERIOD,
             forVotes: 0,
             againstVotes: 0,
             totalVotes: 0,
@@ -165,10 +171,11 @@ contract GenyDAO is
             calldatas: calldatas
         });
 
-        emit ProposalCreated(proposalCount, msg.sender, investorLabels[msg.sender], description, isSensitive, currentTime);
+        emit ProposalCreated(proposalCount, msg.sender, investorLabels[msg.sender], description, isSensitive, startTime);
     }
 
     /// @notice Casts a vote on a proposal
+    /// @dev Callable by any user with sufficient token balance
     /// @param proposalId The ID of the proposal
     /// @param support True for supporting, false for opposing
     function vote(uint256 proposalId, bool support) external nonReentrant whenNotPaused {
@@ -188,6 +195,7 @@ contract GenyDAO is
     }
 
     /// @notice Executes a proposal after voting ends
+    /// @dev Callable by anyone after voting period
     /// @param proposalId The ID of the proposal
     function executeProposal(uint256 proposalId) external nonReentrant whenNotPaused {
         Proposal storage proposal = proposals[proposalId];
@@ -205,6 +213,7 @@ contract GenyDAO is
     }
 
     /// @notice Updates the minimum proposing power percentage
+    /// @dev Only callable by governance (via timelock)
     /// @param isSensitive True for sensitive proposals, false for normal
     /// @param newPercent New percentage (in basis points)
     function updateMinProposingPowerPercent(bool isSensitive, uint32 newPercent) external onlyGovernance {
@@ -221,6 +230,7 @@ contract GenyDAO is
     }
 
     /// @notice Updates the minimum voting power
+    /// @dev Only callable by governance (via timelock)
     /// @param newPower New minimum voting power
     function updateMinVotingPower(uint256 newPower) external onlyGovernance {
         require(newPower >= MIN_VOTING_POWER_MIN && newPower <= MIN_VOTING_POWER_MAX, "Invalid voting power");
@@ -229,6 +239,7 @@ contract GenyDAO is
     }
 
     /// @notice Assigns or updates an investor label by owner
+    /// @dev Only callable by the owner (multisig)
     /// @param investor Address of the investor
     /// @param label New label to assign
     function setInvestorLabel(address investor, InvestorLabel label) external onlyOwner {
@@ -236,6 +247,7 @@ contract GenyDAO is
     }
 
     /// @notice Updates an investor label via GIP
+    /// @dev Only callable by governance (via timelock)
     /// @param investor Address of the investor
     /// @param label New label to assign
     function updateInvestorLabel(address investor, InvestorLabel label) external onlyGovernance {
@@ -243,9 +255,11 @@ contract GenyDAO is
     }
 
     /// @notice Burns tokens from the treasury
+    /// @dev Only callable by the owner (multisig)
     /// @param amount Amount of tokens to burn
     function burnTokens(uint256 amount) external onlyOwner nonReentrant whenNotPaused {
         require(block.timestamp >= lastBurnTimestamp + BURN_COOLDOWN, "Burn cooldown active");
+        require(amount > 0, "Amount must be greater than zero");
         require(amount <= (token.balanceOf(address(this)) * BURN_MAX_PERCENT) / 1e4, "Exceeds max burn limit");
 
         lastBurnTimestamp = block.timestamp;
@@ -256,16 +270,19 @@ contract GenyDAO is
     }
 
     /// @notice Pauses the contract
+    /// @dev Only callable by the owner (multisig)
     function pause() external onlyOwner {
         _pause();
     }
 
     /// @notice Unpauses the contract
+    /// @dev Only callable by the owner (multisig)
     function unpause() external onlyOwner {
         _unpause();
     }
 
     /// @notice Authorizes contract upgrades
+    /// @dev Only callable by the owner (multisig)
     /// @param newImplementation Address of the new implementation
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
@@ -279,6 +296,27 @@ contract GenyDAO is
         require(investor != address(0), "Invalid investor address");
         emit InvestorLabelUpdated(investor, investorLabels[investor], label);
         investorLabels[investor] = label;
+    }
+
+    /// @notice Returns the targets array for a proposal
+    /// @param proposalId The ID of the proposal
+    /// @return The array of target addresses
+    function getProposalTargets(uint256 proposalId) external view returns (address[] memory) {
+        return proposals[proposalId].targets;
+    }
+
+    /// @notice Returns the values array for a proposal
+    /// @param proposalId The ID of the proposal
+    /// @return The array of values
+    function getProposalValues(uint256 proposalId) external view returns (uint256[] memory) {
+        return proposals[proposalId].values;
+    }
+
+    /// @notice Returns the calldatas array for a proposal
+    /// @param proposalId The ID of the proposal
+    /// @return The array of calldatas
+    function getProposalCalldatas(uint256 proposalId) external view returns (bytes[] memory) {
+        return proposals[proposalId].calldatas;
     }
 
     modifier onlyGovernance() {

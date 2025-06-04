@@ -9,9 +9,9 @@ import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Vo
 import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
 
 /// @title GenyToken
+/// @author compez.eth
 /// @notice An ERC20 token with a fixed supply of 256 million, designed to empower creators and drive innovation in the Genyleap ecosystem.
 /// @dev Extends OpenZeppelin's ERC20 with permit for gasless approvals and votes for decentralized governance. All allocations are handled by an external contract. Emits standard ERC20 events (Transfer, Approval) and ERC20Votes events (DelegateChanged, DelegateVotesChanged) for key operations; additional events (e.g., for permit) are not defined as standard Approval events suffice for off-chain tracking, given the fixed supply and external allocation. Nonces import is required for ERC20Permit to manage gasless approvals via signatures.
-/// @author compez.eth
 /// @custom:security-contact security@genyleap.com
 contract GenyToken is ERC20, ERC20Permit, ERC20Votes {
 

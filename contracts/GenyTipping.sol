@@ -70,7 +70,10 @@ contract GenyTipping is
     /// @notice Emitted when a recipient's status is updated
     event RecipientStatusUpdated(address indexed user, bool isActive);
 
-    constructor() { _disableInitializers(); }
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
     /// @notice Initializes the tipping contract
     /// @param _token Address of the GENY token contract
@@ -167,7 +170,7 @@ contract GenyTipping is
         require(airdrop.getTippingQuota(msg.sender, _seasonId, multiplier) >= _amount, "Insufficient tipping quota");
         require(!airdrop.isSeasonEnded(_seasonId), "Season ended");
 
-        airdrop.useTippingQuota(msg.sender, _seasonId, _amount, multiplier, _maxTippingAmount, _merkleProof);
+        airdrop.useTippingQuota(_recipient, _seasonId, _amount, multiplier, _maxTippingAmount, _merkleProof);
 
         recipient.usedQuota += _amount;
         tips.push(Tip({
@@ -179,7 +182,6 @@ contract GenyTipping is
             labelName: recipient.labelName
         }));
 
-        token.safeTransferFrom(msg.sender, _recipient, _amount);
         emit TipSubmitted(msg.sender, _recipient, _seasonId, _amount, recipient.labelName);
     }
 

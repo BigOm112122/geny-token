@@ -17,6 +17,7 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 /// @notice Manages seasonal airdrop campaigns for GENY tokens with vesting and Merkle Proof verification.
 /// @dev Supports seasonal distributions, 3-month withdrawal lock, and DAO governance via GIP. Integrates with GenyAllocation for token supply.
 ///      Uses nonReentrant, Pausable, and UUPS upgradeability with Ownable2Step for security.
+///      Uses block.timestamp for season timing, safe for long-term schedules (e.g., days/months) as miner manipulation is negligible.
 /// @custom:security-contact security@genyleap.com
 contract GenyAirdrop is
     Initializable,
@@ -74,198 +75,231 @@ contract GenyAirdrop is
     event MinHoldingUpdated(uint32 indexed seasonId, uint96 newMinHolding);
     /// @notice Emitted when tipping contract is updated
     event TippingContractUpdated(address indexed newTippingContract);
+    /// @notice Emitted for debugging paused state
+    event DebugPaused(bool paused);
+    /// @notice Emitted for debugging tipping contract caller
+    event DebugTippingContract(address caller, address tippingContract);
 
-    constructor() { _disableInitializers(); }
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
     /// @notice Initializes the airdrop contract
-    /// @param _token Address of the GENY token contract
-    /// @param _dao Address of the GenyDAO contract
-    /// @param _allocationManager Address of the GenyAllocation contract
-    /// @param _timelock Address of the TimelockController contract
-    /// @param _owner Address of the initial owner (e.g., multisig)
+    /// @param tokenAddress Address of the GENY token contract
+    /// @param daoAddress Address of the GenyDAO contract
+    /// @param allocationManagerAddress Address of the GenyAllocation contract
+    /// @param timelockAddress Address of the TimelockController contract
+    /// @param newOwner Address of the initial owner (e.g., multisig)
     function initialize(
-        address _token,
-        address _dao,
-        address _allocationManager,
-        address _timelock,
-        address _owner
+        address tokenAddress,
+        address daoAddress,
+        address allocationManagerAddress,
+        address timelockAddress,
+        address newOwner
     ) external initializer {
-        _validateAddresses(_token, _dao, _allocationManager, _timelock, _owner);
+        require(tokenAddress != address(0), "Invalid token address");
+        require(daoAddress != address(0), "Invalid DAO address");
+        require(allocationManagerAddress != address(0), "Invalid allocation manager address");
+        require(timelockAddress != address(0), "Invalid timelock address");
+        require(newOwner != address(0), "Invalid owner address");
 
         __Ownable2Step_init();
-        _transferOwnership(_owner);
+        _transferOwnership(newOwner);
         __ReentrancyGuard_init();
         __Pausable_init();
         __UUPSUpgradeable_init();
 
-        token = IERC20Upgradeable(_token);
-        dao = _dao;
-        allocationManager = _allocationManager;
-        timelock = _timelock;
+        token = IERC20Upgradeable(tokenAddress);
+        dao = daoAddress;
+        allocationManager = allocationManagerAddress;
+        timelock = timelockAddress;
         currentSeasonId = 0;
         totalDistributed = 0;
     }
 
+    /// @notice Pauses the contract, preventing certain actions
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Unpauses the contract, allowing actions to resume
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
+    /// @dev Validates season ID
+    function _validateSeason(uint32 seasonId) private view {
+        require(seasonId > 0 && seasonId <= currentSeasonId, "Invalid season ID");
+    }
+
     /// @notice Sets the tipping contract address
-    /// @param _tippingContract Address of the GenyTipping contract
-    function setTippingContract(address _tippingContract) external onlyOwner {
-        require(_tippingContract != address(0), "Invalid tipping contract");
-        tippingContract = _tippingContract;
-        emit TippingContractUpdated(_tippingContract);
+    /// @param newTippingContract Address of the GenyTipping contract
+    function setTippingContract(address newTippingContract) external onlyOwner {
+        require(newTippingContract != address(0), "Invalid tipping contract");
+        tippingContract = newTippingContract;
+        emit TippingContractUpdated(newTippingContract);
     }
 
     /// @notice Adds a new airdrop season
-    /// @param _title Season title
-    /// @param _startTime Season start timestamp
-    /// @param _endTime Season end timestamp
-    /// @param _minHolding Minimum GENY holding required
-    /// @param _seasonDistribution Total tokens for the season
-    /// @param _baseDailyQuota Base daily tipping quota
-    /// @param _merkleRoot Merkle root for eligibility verification
+    /// @param title Season title
+    /// @param startTime Season start timestamp
+    /// @param endTime Season end timestamp
+    /// @param minHolding Minimum GENY holding required
+    /// @param seasonDistribution Total tokens for the season
+    /// @param baseDailyQuota Base daily tipping quota
+    /// @param merkleRoot Merkle root for eligibility verification
     function addSeason(
-        string memory _title,
-        uint48 _startTime,
-        uint48 _endTime,
-        uint96 _minHolding,
-        uint96 _seasonDistribution,
-        uint96 _baseDailyQuota,
-        bytes32 _merkleRoot
+        string memory title,
+        uint48 startTime,
+        uint48 endTime,
+        uint96 minHolding,
+        uint96 seasonDistribution,
+        uint96 baseDailyQuota,
+        bytes32 merkleRoot
     ) external onlyOwner whenNotPaused {
-        require(_startTime >= block.timestamp, "Start time must be future");
-        require(_endTime > _startTime, "End time must be after start");
-        require(_seasonDistribution > 0 && totalDistributed + _seasonDistribution <= TOTAL_AIRDROP, "Invalid distribution");
-        require(_baseDailyQuota > 0, "Invalid quota");
+        require(startTime >= block.timestamp, "Start time must be future"); // Safe for season scheduling
+        require(endTime > startTime, "End time must be after start");
+        require(seasonDistribution > 0 && totalDistributed + seasonDistribution <= TOTAL_AIRDROP, "Invalid distribution");
+        require(baseDailyQuota > 0, "Invalid quota");
         if (currentSeasonId > 0) {
             require(block.timestamp > seasons[currentSeasonId].endTime, "Current season not ended");
         }
 
         seasons[++currentSeasonId] = Season({
-            title: _title,
-            startTime: _startTime,
-            endTime: _endTime,
-            minHolding: _minHolding,
-            merkleRoot: _merkleRoot,
-            seasonDistribution: _seasonDistribution,
-            baseDailyQuota: _baseDailyQuota,
+            title: title,
+            startTime: startTime,
+            endTime: endTime,
+            minHolding: minHolding,
+            merkleRoot: merkleRoot,
+            seasonDistribution: seasonDistribution,
+            baseDailyQuota: baseDailyQuota,
             seasonTotalDistributed: 0
         });
 
-        emit SeasonAdded(currentSeasonId, _title, _startTime, _endTime, _minHolding, _seasonDistribution, _baseDailyQuota);
+        emit SeasonAdded(currentSeasonId, title, startTime, endTime, minHolding, seasonDistribution, baseDailyQuota);
     }
 
     /// @notice Updates the minimum holding for a season
-    /// @param _seasonId Season ID
-    /// @param _newMinHolding New minimum holding
-    function updateSeasonMinHolding(uint32 _seasonId, uint96 _newMinHolding) external onlyOwner {
-        _validateSeason(_seasonId);
-        require(_newMinHolding > 0, "Invalid min holding");
-        seasons[_seasonId].minHolding = _newMinHolding;
-        emit MinHoldingUpdated(_seasonId, _newMinHolding);
+    /// @param seasonId Season ID
+    /// @param newMinHolding New minimum holding
+    function updateSeasonMinHolding(uint32 seasonId, uint96 newMinHolding) external onlyOwner {
+        _validateSeason(seasonId);
+        require(newMinHolding > 0, "Invalid min holding");
+        seasons[seasonId].minHolding = newMinHolding;
+        emit MinHoldingUpdated(seasonId, newMinHolding);
     }
 
     /// @notice Updates the base daily quota for a season
-    /// @param _seasonId Season ID
-    /// @param _newQuota New base daily quota
-    function updateBaseDailyQuota(uint32 _seasonId, uint96 _newQuota) external onlyOwner {
-        _validateSeason(_seasonId);
-        require(_newQuota > 0, "Invalid quota");
-        seasons[_seasonId].baseDailyQuota = _newQuota;
-        emit BaseDailyQuotaUpdated(_seasonId, _newQuota);
+    /// @param seasonId Season ID
+    /// @param newQuota New base daily quota
+    function updateBaseDailyQuota(uint32 seasonId, uint96 newQuota) external onlyOwner {
+        _validateSeason(seasonId);
+        require(newQuota > 0, "Invalid quota");
+        seasons[seasonId].baseDailyQuota = newQuota;
+        emit BaseDailyQuotaUpdated(seasonId, newQuota);
     }
 
     /// @notice Updates the Merkle root for a season
-    /// @param _seasonId Season ID
-    /// @param _merkleRoot New Merkle root
-    function updateMerkleRoot(uint32 _seasonId, bytes32 _merkleRoot) external onlyOwner {
-        _validateSeason(_seasonId);
-        seasons[_seasonId].merkleRoot = _merkleRoot;
-        emit MerkleRootUpdated(_seasonId, _merkleRoot);
+    /// @param seasonId Season ID
+    /// @param merkleRoot New Merkle root
+    function updateMerkleRoot(uint32 seasonId, bytes32 merkleRoot) external onlyOwner {
+        _validateSeason(seasonId);
+        seasons[seasonId].merkleRoot = merkleRoot;
+        emit MerkleRootUpdated(seasonId, merkleRoot);
     }
 
     /// @notice Retrieves the tipping quota for a user in a season
-    /// @param _user User address
-    /// @param _seasonId Season ID
-    /// @param _multiplier Multiplier for quota calculation
+    /// @param user User address
+    /// @param seasonId Season ID
+    /// @param multiplier Multiplier for quota calculation
     /// @return quota Available tipping quota
-    function getTippingQuota(address _user, uint32 _seasonId, uint32 _multiplier) external view returns (uint256 quota) {
-        _validateSeason(_seasonId);
-        require(token.balanceOf(_user) >= seasons[_seasonId].minHolding, "Insufficient holding");
+    function getTippingQuota(address user, uint32 seasonId, uint32 multiplier) external view returns (uint256 quota) {
+        _validateSeason(seasonId);
+        require(token.balanceOf(user) >= seasons[seasonId].minHolding, "Insufficient holding");
 
-        TippingQuota storage quotaStruct = tippingQuotas[_user][_seasonId];
-        uint48 currentDay = uint48(block.timestamp / 1 days);
+        TippingQuota storage quotaStruct = tippingQuotas[user][seasonId];
+        uint48 currentDay = uint48(block.timestamp / 1 days); // Safe for daily quota resets
         uint48 lastResetDay = uint48(quotaStruct.lastReset / 1 days);
 
         quota = (currentDay > lastResetDay || quotaStruct.totalQuota == 0)
-            ? seasons[_seasonId].baseDailyQuota * _multiplier
+            ? seasons[seasonId].baseDailyQuota * multiplier
             : quotaStruct.totalQuota > quotaStruct.usedQuota ? quotaStruct.totalQuota - quotaStruct.usedQuota : 0;
     }
 
     /// @notice Uses tipping quota for a user
-    /// @param _user User address
-    /// @param _seasonId Season ID
-    /// @param _amount Amount to use
-    /// @param _multiplier Multiplier for quota
-    /// @param _maxTippingAmount Maximum allowed tipping amount
-    /// @param _merkleProof Merkle proof for eligibility
+    /// @param user User address
+    /// @param seasonId Season ID
+    /// @param amount Amount to use
+    /// @param multiplier Multiplier for quota
+    /// @param maxTippingAmount Maximum allowed tipping amount
+    /// @param merkleProof Merkle proof for eligibility
     function useTippingQuota(
-        address _user,
-        uint32 _seasonId,
-        uint96 _amount,
-        uint32 _multiplier,
-        uint256 _maxTippingAmount,
-        bytes32[] calldata _merkleProof
-    ) external nonReentrant {
+        address user,
+        uint32 seasonId,
+        uint96 amount,
+        uint32 multiplier,
+        uint256 maxTippingAmount,
+        bytes32[] calldata merkleProof
+    ) external nonReentrant whenNotPaused {
+        emit DebugPaused(paused());
+        emit DebugTippingContract(msg.sender, tippingContract);
         require(msg.sender == tippingContract, "Only tipping contract");
-        _validateSeason(_seasonId);
-        require(block.timestamp <= seasons[_seasonId].endTime, "Season ended");
-        require(token.balanceOf(_user) >= seasons[_seasonId].minHolding, "Insufficient holding");
+        require(tippingContract != address(0), "Tipping contract not set");
+        _validateSeason(seasonId);
+        require(block.timestamp <= seasons[seasonId].endTime, "Season ended"); // Safe for season timing
+        require(token.balanceOf(user) >= seasons[seasonId].minHolding, "Insufficient holding");
 
-        bytes32 leaf = keccak256(abi.encodePacked(_user, _maxTippingAmount));
-        require(MerkleProof.verify(_merkleProof, seasons[_seasonId].merkleRoot, leaf), "Invalid Merkle proof");
+        bytes32 leaf = keccak256(abi.encodePacked(user, maxTippingAmount));
+        require(MerkleProof.verify(merkleProof, seasons[seasonId].merkleRoot, leaf), "Invalid Merkle proof");
 
-        TippingQuota storage quota = tippingQuotas[_user][_seasonId];
-        uint48 currentDay = uint48(block.timestamp / 1 days);
+        TippingQuota storage quota = tippingQuotas[user][seasonId];
+        uint48 currentDay = uint48(block.timestamp / 1 days); // Safe for daily quota resets
         if (currentDay > uint48(quota.lastReset / 1 days)) {
-            quota.totalQuota = seasons[_seasonId].baseDailyQuota * _multiplier;
+            quota.totalQuota = seasons[seasonId].baseDailyQuota * multiplier;
             quota.usedQuota = 0;
             quota.lastReset = uint48(block.timestamp);
         }
 
-        require(quota.totalQuota >= quota.usedQuota + _amount, "Insufficient quota");
-        require(quota.totalTipped + _amount <= _maxTippingAmount, "Exceeds max tipping");
+        require(quota.totalQuota >= quota.usedQuota + amount, "Insufficient quota");
+        require(quota.totalTipped + amount <= maxTippingAmount, "Exceeds max tipping");
 
-        quota.usedQuota += _amount;
-        quota.totalTipped += _amount;
+        quota.usedQuota += amount;
+        quota.totalTipped += amount;
 
-        Season storage season = seasons[_seasonId];
-        require(season.seasonTotalDistributed + _amount <= season.seasonDistribution, "Exceeds season distribution");
-        season.seasonTotalDistributed += _amount;
-        totalDistributed += _amount;
+        Season storage season = seasons[seasonId];
+        require(season.seasonTotalDistributed + amount <= season.seasonDistribution, "Exceeds season distribution");
+        season.seasonTotalDistributed += amount;
+        totalDistributed += amount;
 
-        token.safeTransferFrom(allocationManager, _user, _amount);
-        emit TippingQuotaUsed(_user, _seasonId, _amount);
+        // Ensure allocationManager has sufficient balance
+        require(token.balanceOf(allocationManager) >= amount, "Insufficient allocation manager balance");
+        token.safeTransferFrom(allocationManager, user, amount);
+        emit TippingQuotaUsed(user, seasonId, amount);
     }
 
     /// @notice Withdraws unclaimed tokens after withdrawal period
-    /// @param _seasonId Season ID
-    function withdrawUnclaimed(uint32 _seasonId) external onlyOwner nonReentrant {
-        _validateSeason(_seasonId);
-        require(block.timestamp > seasons[_seasonId].endTime + WITHDRAWAL_PERIOD, "Withdrawal period not reached");
+    /// @param seasonId Season ID
+    function withdrawUnclaimed(uint32 seasonId) external onlyOwner nonReentrant {
+        _validateSeason(seasonId);
+        require(block.timestamp > seasons[seasonId].endTime + WITHDRAWAL_PERIOD, "Withdrawal period not reached"); // Safe for withdrawal timing
         require(dao != address(0), "DAO address not set");
 
-        uint96 unclaimed = seasons[_seasonId].seasonDistribution - seasons[_seasonId].seasonTotalDistributed;
+        uint96 unclaimed = seasons[seasonId].seasonDistribution - seasons[seasonId].seasonTotalDistributed;
         require(unclaimed > 0, "No unclaimed tokens");
 
+        // Ensure allocationManager has sufficient balance
+        require(token.balanceOf(allocationManager) >= unclaimed, "Insufficient allocation manager balance");
         token.safeTransferFrom(allocationManager, dao, unclaimed);
-        emit UnclaimedTokensWithdrawn(dao, _seasonId, unclaimed);
+        emit UnclaimedTokensWithdrawn(dao, seasonId, unclaimed);
     }
 
     /// @notice Checks if a season has ended
-    /// @param _seasonId Season ID
+    /// @param seasonId Season ID
     /// @return ended True if the season has ended
-    function isSeasonEnded(uint32 _seasonId) public view returns (bool ended) {
-        _validateSeason(_seasonId);
-        ended = block.timestamp > seasons[_seasonId].endTime;
+    function isSeasonEnded(uint32 seasonId) public view returns (bool ended) {
+        _validateSeason(seasonId);
+        ended = block.timestamp > seasons[seasonId].endTime; // Safe for season timing
     }
 
     /// @notice Returns the remaining airdrop tokens
@@ -275,7 +309,7 @@ contract GenyAirdrop is
     }
 
     /// @notice Returns season details
-    /// @param _seasonId Season ID
+    /// @param seasonId Season ID
     /// @return title Season title
     /// @return startTime Season start timestamp
     /// @return endTime Season end timestamp
@@ -284,7 +318,7 @@ contract GenyAirdrop is
     /// @return seasonDistribution Total tokens for the season
     /// @return baseDailyQuota Base daily tipping quota
     /// @return seasonTotalDistributed Total tokens distributed in season
-    function getSeasonDetails(uint32 _seasonId) external view returns (
+    function getSeasonDetails(uint32 seasonId) external view returns (
         string memory title,
         uint48 startTime,
         uint48 endTime,
@@ -294,8 +328,8 @@ contract GenyAirdrop is
         uint96 baseDailyQuota,
         uint96 seasonTotalDistributed
     ) {
-        _validateSeason(_seasonId);
-        Season storage season = seasons[_seasonId];
+        _validateSeason(seasonId);
+        Season storage season = seasons[seasonId];
         return (
             season.title,
             season.startTime,
@@ -308,14 +342,9 @@ contract GenyAirdrop is
         );
     }
 
-    /// @dev Validates season ID
-    function _validateSeason(uint32 _seasonId) private view {
-        require(_seasonId > 0 && _seasonId <= currentSeasonId, "Invalid season ID");
-    }
-
     /// @dev Validates initialization addresses
-    function _validateAddresses(address _token, address _dao, address _allocationManager, address _timelock, address _owner) private pure {
-        require(_token != address(0) && _dao != address(0) && _allocationManager != address(0) && _timelock != address(0) && _owner != address(0), "Invalid address");
+    function _validateAddresses(address tokenAddress, address daoAddress, address allocationManagerAddress, address timelockAddress, address newOwner) private pure {
+        require(tokenAddress != address(0) && daoAddress != address(0) && allocationManagerAddress != address(0) && timelockAddress != address(0) && newOwner != address(0), "Invalid address");
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}

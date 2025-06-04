@@ -10,6 +10,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @title GenyLiquidity
 /// @author compez.eth
@@ -25,6 +26,7 @@ contract GenyLiquidity is
     UUPSUpgradeable
 {
     using SafeERC20Upgradeable for IERC20Upgradeable;
+    using Math for uint256;
 
     IERC20Upgradeable public token; // GENY token contract
     address public allocationManager; // GenyAllocation for token supply
@@ -46,7 +48,10 @@ contract GenyLiquidity is
     /// @param amount Amount of vested tokens released
     event VestedTokensReleased(uint96 amount);
 
-    constructor() { _disableInitializers(); }
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
     /// @notice Initializes the liquidity contract
     /// @param _token Address of the GENY token contract
@@ -58,6 +63,7 @@ contract GenyLiquidity is
         address _owner
     ) external initializer {
         require(_token != address(0) && _allocationManager != address(0) && _owner != address(0), "Invalid address");
+        require(_allocationManager.code.length > 0, "Allocation manager not a contract");
 
         __Ownable2Step_init();
         _transferOwnership(_owner);
@@ -83,15 +89,18 @@ contract GenyLiquidity is
     ) external onlyOwner nonReentrant whenNotPaused {
         require(poolAddress != address(0) && genyAmount > 0 && pairedAmount > 0, "Invalid parameters");
         require(pairedToken != address(0), "Invalid paired token");
+        require(poolAddress.code.length > 0, "Pool not a contract");
 
         uint256 totalAvailable = FREE_LIQUIDITY + getReleasableVested();
         require(totalAvailable >= genyAmount, "Insufficient GENY balance");
         require(token.balanceOf(allocationManager) >= genyAmount, "Insufficient GENY in allocation");
-        require(IERC20Upgradeable(pairedToken).balanceOf(allocationManager) >= pairedAmount, "Insufficient paired token");
+        require(token.allowance(allocationManager, address(this)) >= genyAmount, "Insufficient GENY allowance");
+        require(IERC20Upgradeable(pairedToken).balanceOf(owner()) >= pairedAmount, "Insufficient paired token");
+        require(IERC20Upgradeable(pairedToken).allowance(owner(), address(this)) >= pairedAmount, "Insufficient paired token allowance");
 
         totalTransferred += genyAmount;
         token.safeTransferFrom(allocationManager, poolAddress, genyAmount);
-        IERC20Upgradeable(pairedToken).safeTransferFrom(allocationManager, poolAddress, pairedAmount);
+        IERC20Upgradeable(pairedToken).safeTransferFrom(owner(), poolAddress, pairedAmount);
 
         emit LiquidityAdded(poolAddress, genyAmount, pairedToken, pairedAmount);
     }
@@ -101,6 +110,8 @@ contract GenyLiquidity is
     function releaseVested() external onlyOwner nonReentrant whenNotPaused returns (uint96 amount) {
         amount = getReleasableVested();
         require(amount > 0, "No tokens to release");
+        require(token.balanceOf(allocationManager) >= amount, "Insufficient GENY in allocation");
+        require(token.allowance(allocationManager, address(this)) >= amount, "Insufficient GENY allowance");
 
         vestedReleased += amount;
         token.safeTransferFrom(allocationManager, address(this), amount);
@@ -116,7 +127,7 @@ contract GenyLiquidity is
         if (elapsed >= VESTING_DURATION) {
             amount = uint96(VESTED_LIQUIDITY - vestedReleased);
         } else {
-            amount = uint96((VESTED_LIQUIDITY * elapsed) / VESTING_DURATION - vestedReleased);
+            amount = uint96(Math.mulDiv(VESTED_LIQUIDITY, elapsed, VESTING_DURATION, Math.Rounding.Floor) - vestedReleased);
         }
     }
 
@@ -124,6 +135,12 @@ contract GenyLiquidity is
     /// @return totalAvailable Total available tokens
     function getTotalAvailable() external view returns (uint256 totalAvailable) {
         totalAvailable = FREE_LIQUIDITY + getReleasableVested() - totalTransferred;
+    }
+
+    /// @notice Gets the contract's current GENY token balance
+    /// @return balance Current GENY token balance
+    function getContractBalance() external view returns (uint256 balance) {
+        return token.balanceOf(address(this));
     }
 
     /// @notice Pauses the contract
