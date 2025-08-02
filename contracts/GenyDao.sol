@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 Genyleap
-
 pragma solidity 0.8.30;
 
 import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -10,14 +9,15 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts/governance/TimelockController.sol";
+import "@openzeppelin/contracts/governance/utils/IVotes.sol";
 
 /// @title GenyDAO
 /// @author compez.eth
 /// @notice Manages Genyleap Improvement Proposals (GIP) for decentralized governance in the Genyleap ecosystem.
 /// @dev Implements voting with 20% quorum for normal proposals and 50% for sensitive ones, 7-day voting period, and 2-day Timelock.
-///      The owner must be a multisig contract (e.g., Gnosis Safe) for secure governance.
-///      Uses UUPS proxy pattern for upgradability.
-///      Assumes GENY token supports SafeERC20 for transfers and interacts with GenyBurnManager for burning.
+/// The owner must be a multisig contract (e.g., Gnosis Safe) for secure governance.
+/// Uses UUPS proxy pattern for upgradability.
+/// Assumes GENY token supports SafeERC20 and IVotes for transfers and voting.
 /// @custom:security-contact security@genyleap.com
 contract GenyDAO is
     Initializable,
@@ -28,7 +28,7 @@ contract GenyDAO is
 {
     using SafeERC20 for IERC20;
 
-    IERC20 public token; // GENY token contract
+    IVotes public token; // GENY token contract with IVotes interface
     address public timelock; // Timelock for delayed execution
     address public burnManager; // GenyBurnManager for token burning
     address public allocationManager; // GenyAllocation for treasury management
@@ -53,6 +53,7 @@ contract GenyDAO is
         address[] targets;
         uint256[] values;
         bytes[] calldatas;
+        uint256 snapshotBlock; // Block number for vote snapshot
     }
 
     mapping(uint256 => Proposal) public proposals; // Proposal ID to details
@@ -71,7 +72,7 @@ contract GenyDAO is
     uint256 private constant MIN_VOTING_POWER_MAX = 2560 * 1e18;
 
     /// @notice Emitted when a new GIP is created
-    event ProposalCreated(uint256 indexed proposalId, address proposer, InvestorLabel proposerLabel, string description, bool isSensitive, uint48 startTime);
+    event ProposalCreated(uint256 indexed proposalId, address proposer, InvestorLabel proposerLabel, string description, bool isSensitive, uint48 startTime, uint256 snapshotBlock);
     /// @notice Emitted when a vote is cast
     event Voted(uint256 indexed proposalId, address voter, bool support, uint96 weight);
     /// @notice Emitted when a proposal is executed
@@ -92,7 +93,7 @@ contract GenyDAO is
 
     /// @notice Initializes the DAO contract
     /// @dev The owner must be a multisig contract (e.g., Gnosis Safe) for secure governance.
-    /// @param _token Address of the GENY token contract
+    /// @param _token Address of the GENY token contract (must support IVotes)
     /// @param _owner Address of the initial owner (multisig)
     /// @param _burnManager Address of the GenyBurnManager contract
     /// @param _allocationManager Address of the GenyAllocation contract
@@ -105,14 +106,12 @@ contract GenyDAO is
         address _timelock
     ) external initializer {
         _validateAddresses(_token, _owner, _burnManager, _allocationManager, _timelock);
-
         __Ownable2Step_init();
         _transferOwnership(_owner);
         __ReentrancyGuard_init();
         __Pausable_init();
         __UUPSUpgradeable_init();
-
-        token = IERC20(_token);
+        token = IVotes(_token);
         burnManager = _burnManager;
         allocationManager = _allocationManager;
         timelock = _timelock;
@@ -135,7 +134,7 @@ contract GenyDAO is
     }
 
     /// @notice Creates a new GIP
-    /// @dev Callable by any user with sufficient token balance
+    /// @dev Callable by any user with sufficient token balance at the current block
     /// @param description Proposal description
     /// @param isSensitive True if the proposal is sensitive
     /// @param targets Contract addresses to call
@@ -150,10 +149,10 @@ contract GenyDAO is
         bytes[] memory calldatas,
         uint48 startTime
     ) external whenNotPaused {
-        require(token.balanceOf(msg.sender) >= getMinProposingPower(isSensitive), "Insufficient proposing power");
+        uint256 snapshotBlock = block.number;
+        require(token.getPastVotes(msg.sender, snapshotBlock) >= getMinProposingPower(isSensitive), "Insufficient proposing power");
         require(targets.length == values.length && values.length == calldatas.length, "Invalid proposal data");
         require(startTime >= block.timestamp, "Start time must be in the future or present");
-
         proposals[++proposalCount] = Proposal({
             proposer: msg.sender,
             description: description,
@@ -166,29 +165,26 @@ contract GenyDAO is
             isSensitive: isSensitive,
             targets: targets,
             values: values,
-            calldatas: calldatas
+            calldatas: calldatas,
+            snapshotBlock: snapshotBlock
         });
-
-        emit ProposalCreated(proposalCount, msg.sender, investorLabels[msg.sender], description, isSensitive, startTime);
+        emit ProposalCreated(proposalCount, msg.sender, investorLabels[msg.sender], description, isSensitive, startTime, snapshotBlock);
     }
 
     /// @notice Casts a vote on a proposal
-    /// @dev Callable by any user with sufficient token balance
+    /// @dev Callable by any user with sufficient token balance at proposal snapshot block
     /// @param proposalId The ID of the proposal
     /// @param support True for supporting, false for opposing
     function vote(uint256 proposalId, bool support) external nonReentrant whenNotPaused {
         Proposal storage proposal = proposals[proposalId];
         require(block.timestamp >= proposal.startTime && block.timestamp <= proposal.endTime, "Voting not active");
         require(!hasVoted[proposalId][msg.sender], "Already voted");
-
-        uint96 weight = uint96(token.balanceOf(msg.sender));
+        uint96 weight = uint96(token.getPastVotes(msg.sender, proposal.snapshotBlock));
         require(weight >= minVotingPower, "Insufficient voting power");
-
         hasVoted[proposalId][msg.sender] = true;
         proposal.totalVotes += weight;
         if (support) proposal.forVotes += weight;
         else proposal.againstVotes += weight;
-
         emit Voted(proposalId, msg.sender, support, weight);
     }
 
@@ -200,10 +196,8 @@ contract GenyDAO is
         require(block.timestamp > proposal.endTime, "Voting not ended");
         require(!proposal.executed, "Already executed");
         require(proposal.forVotes > proposal.againstVotes, "Proposal rejected");
-
         uint32 quorumPercent = proposal.isSensitive ? QUORUM_SENSITIVE : QUORUM_NORMAL;
         require(proposal.totalVotes >= (getCirculatingSupply() * quorumPercent) / 1e4, "Quorum not met");
-
         proposal.executed = true;
         TimelockController(payable(timelock)).scheduleBatch(
             proposal.targets,
@@ -213,7 +207,6 @@ contract GenyDAO is
             "GenyDAO Proposal Execution",
             2 days
         );
-
         emit ProposalExecuted(proposalId);
     }
 
@@ -264,13 +257,11 @@ contract GenyDAO is
     /// @param amount Amount of tokens to burn
     function burnTokens(uint256 amount) external onlyOwner nonReentrant whenNotPaused {
         require(amount > 0, "Amount must be greater than zero");
-        require(amount <= (token.balanceOf(address(this)) * BURN_MAX_PERCENT) / 1e4, "Exceeds max burn limit");
-        require(token.balanceOf(address(this)) >= amount, "Insufficient balance");
-
+        require(amount <= (IERC20(address(token)).balanceOf(address(this)) * BURN_MAX_PERCENT) / 1e4, "Exceeds max burn limit");
+        require(IERC20(address(token)).balanceOf(address(this)) >= amount, "Insufficient balance");
         // Transfer tokens to allocationManager for burning
-        token.safeTransfer(allocationManager, amount);
+        IERC20(address(token)).safeTransfer(allocationManager, amount);
         IGenyBurnManager(burnManager).burnFromContract(amount);
-
         emit TokensBurned(proposalCount, amount);
     }
 
@@ -282,8 +273,8 @@ contract GenyDAO is
 
     /// @notice Unpauses the contract, allowing operations to resume after an emergency pause.
     /// @dev Only callable by governance via TimelockController to ensure security.
-    ///      Multisig must initiate this action through governance.
-    ///      The caller must be the Timelock contract address.
+    /// Multisig must initiate this action through governance.
+    /// The caller must be the Timelock contract address.
     function unpause() external onlyGovernance {
         _unpause();
     }
