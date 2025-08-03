@@ -3,14 +3,18 @@
 
 pragma solidity 0.8.30;
 
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+
 /**
  * @title GenyGuard
  * @author compez.eth
  * @notice Modular, non-custodial, one-time code recovery protection for any EVM address. All sensitive actions require single-use, rotating recovery codes. No plaintext code is ever stored on-chain.
- * @dev Recovery codes are always 28-character alphanumeric (A-Z, 0-9), case-insensitive. Each sensitive operation requires the current code and a new code for rotation (hash of new code). This guarantees replay protection and robust off-chain security. Only the code hash is stored.
+ * @dev UUPS Upgradeable implementation. Recovery codes are always 28-character alphanumeric (A-Z, 0-9), case-insensitive. Each sensitive operation requires the current code and a new code for rotation (hash of new code). Only the code hash is stored.
  * @custom:security-contact security@genyleap.com
  */
-contract GenyGuard {
+contract GenyGuard is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     /// @dev Maps each user to their registered recovery wallet
     mapping(address => address) private _recoveryWallet;
     /// @dev Indicates if recovery mode is currently active
@@ -35,6 +39,21 @@ contract GenyGuard {
     error RecoveryKeyNotSet();
     error Unauthorized();
     error NotInRecoveryMode();
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /**
+     * @notice UUPS initializer (must be called via proxy, once).
+     * @param owner_ Address of the contract owner (e.g., multisig or timelock)
+     */
+    function initialize(address owner_) external initializer {
+        __Ownable2Step_init();
+        __UUPSUpgradeable_init();
+        _transferOwnership(owner_);
+    }
 
     // ====== USER FLOW ======
 
@@ -129,10 +148,11 @@ contract GenyGuard {
             bytes1 c = b[i];
             if (c == "-") continue;
             if (
-                !( (c >= "A" && c <= "Z") ||
-                   (c >= "a" && c <= "z") ||
-                   (c >= "0" && c <= "9")
-                 )
+                !(
+                    (c >= "A" && c <= "Z") ||
+                    (c >= "a" && c <= "z") ||
+                    (c >= "0" && c <= "9")
+                )
             ) {
                 return false;
             }
@@ -183,4 +203,7 @@ contract GenyGuard {
     function getRecoveryKeyHash(address user) external view returns (bytes32) {
         return _recoveryKeyHash[user];
     }
+
+    /// @dev UUPS authorization (only owner)
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 }
