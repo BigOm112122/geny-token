@@ -3,50 +3,52 @@
 
 pragma solidity 0.8.30;
 
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
 
 /// @title GenyToken
 /// @author compez.eth
 /// @notice A fixed-supply ERC20 token (256 million GENY) designed to power creators, communities, and governance across the Genyleap ecosystem.
-/// @dev Implements ERC20 with permit (EIP-2612), ERC20Votes, and Ownable for controlled metadata updates.  
-///      Fully non-upgradeable and roleless by design, ensuring long-term decentralization and predictable token behavior.
+/// @dev Fully non-upgradeable and permissionless.
+///      No ownership, no roles, no post-deploy configuration.
+///      Designed for long-term decentralization and predictable behavior.
 /// @custom:security-contact security@genyleap.com
 contract GenyToken is
     ERC20,
     ERC20Permit,
-    ERC20Votes,
-    Ownable
+    ERC20Votes
 {
-    /// @dev Fixed total token supply (256 million tokens with 18 decimals)
+    /// @dev Fixed total token supply (256 million tokens, 18 decimals)
     uint256 public constant TOTAL_SUPPLY = 256_000_000 * 1e18;
 
-    /// @notice ERC-7572 metadata URI
+    /// @notice ERC-7572 contract-level metadata URI (set once)
     string private _contractURI;
 
-    /// @notice Emitted once upon successful token deployment and initial allocation
+    /// @notice Emitted once upon successful token deployment and initial mint
     event Initialized(address indexed initialHolder, uint256 amount);
-    /// @notice Emitted when the contract metadata URI is set or updated
-    event ContractURISet(string indexed uri);
 
-    /// errors
+    /// @notice Emitted once when contract metadata URI is set
+    event ContractURISet(string uri);
+
+    /// Errors
     error ZeroAddressNotAllowed();
     error URIMustBeSet();
     error CannotReceiveEther();
 
-    // Prevent contract from receiving ETH
+    /// @dev Prevent receiving ETH
     receive() external payable { revert CannotReceiveEther(); }
     fallback() external payable { revert CannotReceiveEther(); }
 
-    /// @param initialHolder Address to receive the entire supply
-    /// @param contractURI_ URI for contract-level metadata
-    constructor(address initialHolder, string memory contractURI_)
+    /// @param initialHolder Address receiving the entire token supply (Allocation Proxy)
+    /// @param contractURI_  ERC-7572 contract-level metadata URI
+    constructor(
+        address initialHolder,
+        string memory contractURI_
+    )
         ERC20("Genyleap", "GENY")
         ERC20Permit("GENY")
-        Ownable(msg.sender)
     {
         if (initialHolder == address(0)) revert ZeroAddressNotAllowed();
         if (bytes(contractURI_).length == 0) revert URIMustBeSet();
@@ -58,32 +60,29 @@ contract GenyToken is
         emit Initialized(initialHolder, TOTAL_SUPPLY);
     }
 
-    /// @notice Returns ERC-7572 contract-level metadata
+    /// @notice Returns ERC-7572 contract-level metadata URI
     function contractURI() external view returns (string memory) {
         return _contractURI;
     }
 
-    /// @notice Update the contract metadata URI (only owner)
-    function setContractURI(string memory newURI) external onlyOwner {
-        if (bytes(newURI).length == 0) revert URIMustBeSet();
-        _contractURI = newURI;
-        emit ContractURISet(newURI);
-    }
-
-    /// @notice Exposes constant total supply (mirror)
+    /// @notice Exposes constant total supply (mirror helper)
     function totalSupplyConstant() external pure returns (uint256) {
         return TOTAL_SUPPLY;
     }
 
-    /// Internal hook overrides required by Solidity
-    function _update(address from, address to, uint256 amount)
+    /// @dev Required override for ERC20Votes
+    function _update(
+        address from,
+        address to,
+        uint256 amount
+    )
         internal
         override(ERC20, ERC20Votes)
     {
         super._update(from, to, amount);
     }
 
-    /// @notice Multiple inheritance fix for shared nonces (permit/votes)
+    /// @dev Resolve multiple inheritance for permit/votes nonces
     function nonces(address owner)
         public
         view
